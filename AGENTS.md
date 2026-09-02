@@ -68,7 +68,7 @@ Pointers only — `CONTRACT.md` is authoritative for all of them.
 - raw API evidence written before any parsing or derived metric
 - no result-improving reruns
 
-`CONTRACT.md` REV 1 is **awaiting human approval** and is not yet frozen, hashed, or committed.
+`CONTRACT.md` REV 1 is **HUMAN APPROVED — FROZEN**. Read `CONTRACT.md` and `CONTRACT.sha256` for the authoritative revision, freeze, and hash state.
 
 ## Safety and authority boundaries
 
