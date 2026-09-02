@@ -6,11 +6,18 @@ call, no Gemini client, no read of `GEMINI_API_KEY`.
 
 Scope is deliberately the mechanisms CONTRACT.md requires up front:
 
-* contract integrity (fail closed)                            -- CONTRACT.md preamble
-* resolved STATIC / AGENTIC payload construction              -- CONTRACT.md section 4
-* structured pair invariant: arms differ only at `processing` -- CONTRACT.md section 4
-* PRE-FLIGHT / HARNESS failure evidence, `request_made=false` -- CONTRACT.md sections 4, 16
-* raw-response-first persistence, no overwrite                -- CONTRACT.md sections 10, 11
+* contract integrity, fail closed                              -- CONTRACT.md preamble
+* resolved STATIC / AGENTIC payload construction               -- CONTRACT.md section 4
+* per-arm validation of the complete frozen request shape      -- CONTRACT.md section 4
+* structured pair invariant: arms differ only at `processing`  -- CONTRACT.md section 4
+* PRE-FLIGHT / HARNESS failure evidence, `request_made=false`  -- CONTRACT.md sections 4, 16
+* raw-response-first persistence, no overwrite, no lossy write -- CONTRACT.md sections 10, 11
+
+Two independent guarantees, both required before a pair is accepted:
+
+1. each arm on its own matches the frozen request shape, so two identically
+   malformed arms cannot pass by agreeing with each other;
+2. the two arms differ only at the treatment field.
 
 Values that are still a human decision -- the video URIs, the prompts, the
 concrete `generation_config` -- are inputs to this module. It never supplies
@@ -22,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,17 +44,44 @@ MODEL = "gemini-3.7-flash"
 RESOLUTION = "low"
 ARMS = {"STATIC": "static", "AGENTIC": "agentic"}
 
+# The frozen request shape: exactly these keys, in this structure.
+TOP_LEVEL_KEYS = {"model", "input", "generation_config"}
+VIDEO_BLOCK_KEYS = {"type", "uri", "processing", "resolution"}
+TEXT_BLOCK_KEYS = {"type", "text"}
+#: Static-only controls. CONTRACT.md section 4: not set, in either arm.
+STATIC_ONLY_KEYS = ("fps", "start_offset", "end_offset")
+
 #: The single field the two arms of a pair are permitted to differ at.
 PAIR_VARIABLE_PATH = "input[0].processing"
 PAIR_INVARIANT = f"arms of a pair differ only at {PAIR_VARIABLE_PATH}"
+
+# Failure categories. Small on purpose: enough to reconstruct what failed.
+CONTRACT_INTEGRITY = "CONTRACT_INTEGRITY"
+REQUEST_SHAPE = "REQUEST_SHAPE"
+PAIR_DIFFERENCE = "PAIR_DIFFERENCE"
+
+FAILED_INVARIANT = {
+    CONTRACT_INTEGRITY: "CONTRACT.md matches the hash recorded in CONTRACT.sha256",
+    REQUEST_SHAPE: "each arm matches the frozen request shape (CONTRACT.md section 4)",
+    PAIR_DIFFERENCE: PAIR_INVARIANT,
+}
 
 
 class ContractIntegrityError(Exception):
     """The frozen contract is missing, unreadable, or does not match its hash."""
 
 
+class InvariantViolation(Exception):
+    """A pair violated a frozen invariant. Carries its category and details."""
+
+    def __init__(self, category: str, violations: list[str]):
+        super().__init__(FAILED_INVARIANT[category])
+        self.category = category
+        self.violations = violations
+
+
 class PreflightError(Exception):
-    """A pair violated a frozen invariant. Carries the failure record."""
+    """Preflight rejected a pair. Carries the failure record."""
 
     def __init__(self, record: dict):
         super().__init__(record["failed_invariant"])
@@ -55,6 +90,10 @@ class PreflightError(Exception):
 
 class EvidenceExistsError(Exception):
     """Refused to overwrite an already-written evidence artifact."""
+
+
+class EvidenceSerializationError(Exception):
+    """Refused to write incomplete evidence for an object we cannot serialize."""
 
 
 # --------------------------------------------------------------------------
@@ -143,6 +182,94 @@ def payload_sha256(payload: dict) -> str:
 
 
 # --------------------------------------------------------------------------
+# per-arm frozen request shape (CONTRACT.md section 4)
+# --------------------------------------------------------------------------
+
+
+def _nonempty_str(value) -> bool:
+    return isinstance(value, str) and value != ""
+
+
+def validate_arm(arm: str, payload) -> list[str]:
+    """Return every way one resolved payload departs from the frozen shape.
+
+    Checked per arm, independently of the other arm, so two identically
+    malformed payloads cannot pass by agreeing with each other.
+    """
+    bad: list[str] = []
+
+    def flag(path: str, reason: str) -> None:
+        bad.append(f"{arm}:{path} ({reason})")
+
+    if not isinstance(payload, dict):
+        return [f"{arm}: payload is not a mapping"]
+
+    for key in sorted(TOP_LEVEL_KEYS - set(payload)):
+        flag(key, "missing")
+    for key in sorted(set(payload) - TOP_LEVEL_KEYS):
+        flag(key, "unexpected top-level field")
+
+    if payload.get("model") != MODEL:
+        flag("model", f"expected {MODEL!r}, got {payload.get('model')!r}")
+
+    blocks = payload.get("input")
+    if not isinstance(blocks, list) or len(blocks) != 2:
+        flag("input", "expected a two-item list in the frozen order")
+        blocks = None
+
+    if blocks is not None:
+        video, text = blocks
+        if not isinstance(video, dict):
+            flag("input[0]", "expected the video block mapping")
+        else:
+            for key in sorted(VIDEO_BLOCK_KEYS - set(video)):
+                flag(f"input[0].{key}", "missing")
+            for key in sorted(set(video) - VIDEO_BLOCK_KEYS):
+                reason = (
+                    "static-only control, not set in either arm"
+                    if key in STATIC_ONLY_KEYS
+                    else "unexpected field on the video block"
+                )
+                flag(f"input[0].{key}", reason)
+            if video.get("type") != "video":
+                flag("input[0].type", f"expected 'video', got {video.get('type')!r}")
+            if not _nonempty_str(video.get("uri")):
+                flag("input[0].uri", "expected a non-empty string")
+            if video.get("processing") != ARMS[arm]:
+                flag(
+                    "input[0].processing",
+                    f"expected {ARMS[arm]!r}, got {video.get('processing')!r}",
+                )
+            if video.get("resolution") != RESOLUTION:
+                flag(
+                    "input[0].resolution",
+                    f"expected {RESOLUTION!r}, got {video.get('resolution')!r}",
+                )
+
+        if not isinstance(text, dict):
+            flag("input[1]", "expected the text block mapping")
+        else:
+            for key in sorted(TEXT_BLOCK_KEYS - set(text)):
+                flag(f"input[1].{key}", "missing")
+            for key in sorted(set(text) - TEXT_BLOCK_KEYS):
+                flag(f"input[1].{key}", "unexpected field on the text block")
+            if text.get("type") != "text":
+                flag("input[1].type", f"expected 'text', got {text.get('type')!r}")
+            if not _nonempty_str(text.get("text")):
+                flag("input[1].text", "expected a non-empty string")
+
+    config = payload.get("generation_config")
+    if "generation_config" in payload:
+        # Values are a human decision; only the frozen invariants are checked.
+        if not isinstance(config, dict) or not config:
+            flag("generation_config", "expected a non-empty mapping, explicitly set")
+        elif config.get("thinking_level") == "minimal":
+            flag("generation_config.thinking_level", "must not be 'minimal'")
+
+    return bad
+
+
+# --------------------------------------------------------------------------
 # structured pair comparison
 # --------------------------------------------------------------------------
 
@@ -172,31 +299,22 @@ def diff_paths(a: dict, b: dict) -> list[str]:
     )
 
 
-def _frozen_field_violations(pair: dict[str, dict]) -> list[str]:
-    """Paths where a payload departs from a value CONTRACT.md freezes outright."""
-    bad = []
-    for arm, payload in pair.items():
-        flat = _flatten(payload)
-        if flat.get("model") != MODEL:
-            bad.append(f"{arm}:model")
-        if flat.get("input[0].resolution") != RESOLUTION:
-            bad.append(f"{arm}:input[0].resolution")
-        if flat.get("input[0].processing") != ARMS[arm]:
-            bad.append(f"{arm}:input[0].processing")
-    return sorted(bad)
-
-
 def check_pair(pair: dict[str, dict]) -> None:
-    """Raise ValueError listing every frozen-invariant violation in a pair."""
+    """Verify both frozen guarantees. Raises `InvariantViolation` on failure."""
     if set(pair) != set(ARMS):
-        raise ValueError(f"pair must contain exactly {sorted(ARMS)}; got {sorted(pair)}")
+        raise InvariantViolation(
+            REQUEST_SHAPE, [f"pair must contain exactly {sorted(ARMS)}; got {sorted(pair)}"]
+        )
 
-    problems = _frozen_field_violations(pair)
+    shape = [v for arm in sorted(pair) for v in validate_arm(arm, pair[arm])]
+    if shape:
+        raise InvariantViolation(REQUEST_SHAPE, shape)
+
     differing = diff_paths(pair["STATIC"], pair["AGENTIC"])
     if differing != [PAIR_VARIABLE_PATH]:
-        problems.extend(differing or ["<arms are identical: no experimental variable>"])
-    if problems:
-        raise ValueError(sorted(set(problems)))
+        raise InvariantViolation(
+            PAIR_DIFFERENCE, differing or ["<arms are identical: no experimental variable>"]
+        )
 
 
 # --------------------------------------------------------------------------
@@ -208,35 +326,71 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def preflight(pair_id: str, pair: dict[str, dict], evidence_dir: Path | None = None) -> None:
-    """Verify a pair before any request is made.
-
-    Returns None when the pair is valid. Otherwise records a PRE-FLIGHT /
-    HARNESS failure with `request_made = false` and raises `PreflightError`.
-    No API function is invoked on either path.
-    """
+def _safe_sha(payload) -> str:
     try:
-        check_pair(pair)
-        return
-    except ValueError as exc:
-        problems = exc.args[0] if isinstance(exc.args[0], list) else [str(exc)]
+        return payload_sha256(payload)
+    except (TypeError, ValueError):
+        return "UNSERIALIZABLE"
 
-    flat = {arm: _flatten(payload) for arm, payload in pair.items()}
+
+def preflight(
+    pair_id: str,
+    pair: dict[str, dict],
+    evidence_dir: Path | None = None,
+    *,
+    verify=verify_contract,
+) -> str:
+    """Verify the frozen contract and the pair before any request is made.
+
+    Returns the verified contract digest when the pair is valid, so later
+    provenance code can record what it ran under. Otherwise records a
+    PRE-FLIGHT / HARNESS failure with `request_made = false` and raises
+    `PreflightError`. No API function is invoked on either path.
+
+    `verify` is injectable so tests can simulate a contract-integrity
+    failure without touching the frozen artifacts.
+    """
     record = {
         "stage": "PRE-FLIGHT",
         "failure_class": "HARNESS",
         "request_made": False,
-        "timestamp": _now(),
+        "timestamp": None,
         "pair_id": pair_id,
         "contract_rev": CONTRACT_REV,
-        "failed_invariant": PAIR_INVARIANT,
-        "differing_paths": problems,
-        "differing_values": {
-            path: {arm: flat[arm].get(path.split(":")[-1]) for arm in pair}
-            for path in problems
-        },
-        "payload_sha256": {arm: payload_sha256(payload) for arm, payload in pair.items()},
     }
+
+    try:
+        digest = verify()
+    except ContractIntegrityError as exc:
+        record |= {
+            "timestamp": _now(),
+            "invariant_category": CONTRACT_INTEGRITY,
+            "failed_invariant": FAILED_INVARIANT[CONTRACT_INTEGRITY],
+            "violations": [f"CONTRACT.md integrity: {exc}"],
+        }
+        _record_preflight_failure(record, evidence_dir)
+
+    try:
+        check_pair(pair)
+        return digest
+    except InvariantViolation as exc:
+        record |= {
+            "timestamp": _now(),
+            "contract_sha256": digest,
+            "invariant_category": exc.category,
+            "failed_invariant": FAILED_INVARIANT[exc.category],
+            "violations": exc.violations,
+            "payload_sha256": {arm: _safe_sha(payload) for arm, payload in pair.items()},
+        }
+        if exc.category == PAIR_DIFFERENCE:
+            flat = {arm: _flatten(payload) for arm, payload in pair.items()}
+            record["differing_values"] = {
+                path: {arm: flat[arm].get(path) for arm in pair} for path in exc.violations
+            }
+        _record_preflight_failure(record, evidence_dir)
+
+
+def _record_preflight_failure(record: dict, evidence_dir: Path | None) -> None:
     if evidence_dir is not None:
         write_evidence(Path(evidence_dir), "preflight_failure.json", record)
     raise PreflightError(record)
@@ -248,25 +402,42 @@ def preflight(pair_id: str, pair: dict[str, dict], evidence_dir: Path | None = N
 
 
 def _json_default(obj):
-    """Serialize SDK-shaped objects without hand-picking a subset of fields."""
+    """Serialize an object whole, or fail. Never a lossy stand-in.
+
+    Structured serializers are accepted in order; anything we cannot
+    reconstruct completely raises rather than writing a `repr()` string
+    into evidence that claims to be raw.
+    """
     for attr in ("model_dump", "to_dict", "dict"):
         method = getattr(obj, attr, None)
         if callable(method):
             try:
                 return method()
-            except Exception:  # noqa: BLE001 - evidence must still be written
-                pass
-    if hasattr(obj, "__dict__"):
-        return vars(obj)
-    return repr(obj)
+            except Exception as exc:  # noqa: BLE001 - loud, not lossy
+                raise EvidenceSerializationError(
+                    f"{type(obj).__name__}.{attr}() failed: {exc!r}"
+                ) from exc
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    state = getattr(obj, "__dict__", None)
+    if state:
+        return dict(state)
+    raise EvidenceSerializationError(
+        f"cannot serialize {type(obj).__name__} completely: no model_dump/to_dict/dict, "
+        "not a dataclass, no instance __dict__"
+    )
 
 
 def write_evidence(attempt_dir: Path, name: str, data) -> Path:
-    """Write one evidence artifact. Never overwrites an existing one."""
+    """Write one evidence artifact. Never overwrites, never writes partial JSON.
+
+    Serialization happens before the file is created, so a serialization
+    failure leaves no artifact behind at all.
+    """
+    payload = data if isinstance(data, str) else json.dumps(data, indent=2, default=_json_default)
     attempt_dir = Path(attempt_dir)
     attempt_dir.mkdir(parents=True, exist_ok=True)
     path = attempt_dir / name
-    payload = data if isinstance(data, str) else json.dumps(data, indent=2, default=_json_default)
     try:
         with open(path, "x", encoding="utf-8", newline="") as fh:
             fh.write(payload)
@@ -280,7 +451,9 @@ def persist_response(attempt_dir: Path, response, answer_text: str) -> dict[str,
 
     `response` is serialized whole -- steps, status, errors and the entire
     usage object as-is. `answer_text` is written verbatim: unedited,
-    uncleaned, unformatted, untrimmed.
+    uncleaned, unformatted, untrimmed. If the response cannot be serialized
+    completely, `EvidenceSerializationError` is raised and neither artifact
+    is created.
     """
     raw = write_evidence(attempt_dir, "raw_response.json", response)
     answer = write_evidence(attempt_dir, "answer.txt", answer_text)
