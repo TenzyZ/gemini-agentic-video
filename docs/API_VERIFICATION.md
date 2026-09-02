@@ -31,6 +31,10 @@ Corrections are recorded rather than applied silently.
 
 6. **Item 10's agentic token-accounting sub-item moved from `UNVERIFIED` to `DOCUMENTED EXPECTATION — RUNTIME OBSERVATION PENDING`.** Official Video Understanding documentation maps navigation reasoning to `total_thought_tokens` and on-demand frame/audio/transcript loads to `total_tool_use_tokens`. Item 10's overall status stays CONFIRMED — the counters themselves were never in doubt. Per-`processing_call` attribution remains UNVERIFIED. The runtime-evidence boundary is unchanged: documentation states an expectation, the recorded usage object states the fact.
 
+**2026-09-03 — thinking-default verification** (documentation only; no API call):
+
+7. **CONFIRMED:** Google's current Gemini 3.7 Flash guide identifies `medium` as the model's default thinking level and lists `low`, `medium`, and `high` as supported. Source: https://ai.google.dev/gemini-api/docs/latest-model (retrieved 2026-09-03). This is a documented model fact, not a runtime observation.
+
 ---
 
 ## Summary Table
@@ -528,6 +532,7 @@ These are Google's claims about the feature under test. They are the hypotheses 
 | https://ai.google.dev/api/interactions-api | 2026-09-02 |
 | https://ai.google.dev/gemini-api/docs/models | 2026-09-02 |
 | https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash | 2026-09-02 |
+| https://ai.google.dev/gemini-api/docs/latest-model | 2026-09-03 |
 | https://ai.google.dev/gemini-api/docs/rate-limits | 2026-09-02 |
 | https://ai.google.dev/gemini-api/docs/pricing | 2026-09-02 |
 | https://ai.google.dev/gemini-api/docs/interactions/image-understanding | 2026-09-02 |

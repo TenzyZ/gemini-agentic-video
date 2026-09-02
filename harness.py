@@ -9,19 +9,20 @@ Scope is deliberately the mechanisms CONTRACT.md requires up front:
 * contract integrity, fail closed                              -- CONTRACT.md preamble
 * resolved STATIC / AGENTIC payload construction               -- CONTRACT.md section 4
 * per-arm validation of the complete frozen request shape      -- CONTRACT.md section 4
+* deterministic generation-config policy and seed schedule     -- approved phase policy
 * structured pair invariant: arms differ only at `processing`  -- CONTRACT.md section 4
 * PRE-FLIGHT / HARNESS failure evidence, `request_made=false`  -- CONTRACT.md sections 4, 16
 * raw-response-first persistence, no overwrite, no lossy write -- CONTRACT.md sections 10, 11
 
 Two independent guarantees, both required before a pair is accepted:
 
-1. each arm on its own matches the frozen request shape, so two identically
-   malformed arms cannot pass by agreeing with each other;
+1. each arm on its own matches the frozen request shape and approved generation
+   policy, so two identically malformed arms cannot pass by agreeing;
 2. the two arms differ only at the treatment field.
 
-Values that are still a human decision -- the video URIs, the prompts, the
-concrete `generation_config` -- are inputs to this module. It never supplies
-a default for one.
+Values that are still a human decision -- the video URIs, the prompts, and
+`max_output_tokens` -- are inputs to this module. It never supplies a default
+for one.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+import experiment_config
 
 REPO_ROOT = Path(__file__).resolve().parent
 CONTRACT_PATH = REPO_ROOT / "CONTRACT.md"
@@ -58,11 +61,13 @@ PAIR_INVARIANT = f"arms of a pair differ only at {PAIR_VARIABLE_PATH}"
 # Failure categories. Small on purpose: enough to reconstruct what failed.
 CONTRACT_INTEGRITY = "CONTRACT_INTEGRITY"
 REQUEST_SHAPE = "REQUEST_SHAPE"
+GENERATION_CONFIG = "GENERATION_CONFIG"
 PAIR_DIFFERENCE = "PAIR_DIFFERENCE"
 
 FAILED_INVARIANT = {
     CONTRACT_INTEGRITY: "CONTRACT.md matches the hash recorded in CONTRACT.sha256",
     REQUEST_SHAPE: "each arm matches the frozen request shape (CONTRACT.md section 4)",
+    GENERATION_CONFIG: "each arm matches the approved scored generation-config policy",
     PAIR_DIFFERENCE: PAIR_INVARIANT,
 }
 
@@ -145,7 +150,6 @@ def build_payload(arm: str, *, video_uri: str, prompt: str, generation_config: d
     if not isinstance(generation_config, dict) or not generation_config:
         raise ValueError("generation_config must be a non-empty mapping, explicitly set")
     if generation_config.get("thinking_level") == "minimal":
-        # CONTRACT.md section 4: documented to error on this model.
         raise ValueError("thinking_level must not be 'minimal'")
 
     return {
@@ -163,8 +167,21 @@ def build_payload(arm: str, *, video_uri: str, prompt: str, generation_config: d
     }
 
 
-def build_pair(*, video_uri: str, prompt: str, generation_config: dict) -> dict[str, dict]:
-    """Build both arms of one pair from a single set of inputs."""
+def build_pair(
+    test_id: str,
+    repeat_id: str,
+    *,
+    video_uri: str,
+    prompt: str,
+    max_output_tokens: int,
+) -> dict[str, dict]:
+    """Build both arms with one policy-derived config from the verified contract."""
+    generation_config = experiment_config.build_generation_config(
+        contract_sha256=verify_contract(),
+        test_id=test_id,
+        repeat_id=repeat_id,
+        max_output_tokens=max_output_tokens,
+    )
     return {
         arm: build_payload(
             arm, video_uri=video_uri, prompt=prompt, generation_config=generation_config
@@ -260,11 +277,8 @@ def validate_arm(arm: str, payload) -> list[str]:
 
     config = payload.get("generation_config")
     if "generation_config" in payload:
-        # Values are a human decision; only the frozen invariants are checked.
         if not isinstance(config, dict) or not config:
             flag("generation_config", "expected a non-empty mapping, explicitly set")
-        elif config.get("thinking_level") == "minimal":
-            flag("generation_config.thinking_level", "must not be 'minimal'")
 
     return bad
 
@@ -299,7 +313,13 @@ def diff_paths(a: dict, b: dict) -> list[str]:
     )
 
 
-def check_pair(pair: dict[str, dict]) -> None:
+def check_pair(
+    test_id: str,
+    repeat_id: str,
+    pair: dict[str, dict],
+    *,
+    contract_sha256: str,
+) -> None:
     """Verify both frozen guarantees. Raises `InvariantViolation` on failure."""
     if set(pair) != set(ARMS):
         raise InvariantViolation(
@@ -309,6 +329,20 @@ def check_pair(pair: dict[str, dict]) -> None:
     shape = [v for arm in sorted(pair) for v in validate_arm(arm, pair[arm])]
     if shape:
         raise InvariantViolation(REQUEST_SHAPE, shape)
+
+    config_violations = []
+    for arm in sorted(pair):
+        try:
+            experiment_config.validate_generation_config(
+                pair[arm]["generation_config"],
+                contract_sha256=contract_sha256,
+                test_id=test_id,
+                repeat_id=repeat_id,
+            )
+        except experiment_config.GenerationConfigError as exc:
+            config_violations.extend(f"{arm}:{violation}" for violation in exc.violations)
+    if config_violations:
+        raise InvariantViolation(GENERATION_CONFIG, config_violations)
 
     differing = diff_paths(pair["STATIC"], pair["AGENTIC"])
     if differing != [PAIR_VARIABLE_PATH]:
@@ -334,7 +368,8 @@ def _safe_sha(payload) -> str:
 
 
 def preflight(
-    pair_id: str,
+    test_id: str,
+    repeat_id: str,
     pair: dict[str, dict],
     evidence_dir: Path | None = None,
     *,
@@ -355,7 +390,7 @@ def preflight(
         "failure_class": "HARNESS",
         "request_made": False,
         "timestamp": None,
-        "pair_id": pair_id,
+        "pair_id": f"{test_id}/{repeat_id}",
         "contract_rev": CONTRACT_REV,
     }
 
@@ -371,7 +406,7 @@ def preflight(
         _record_preflight_failure(record, evidence_dir)
 
     try:
-        check_pair(pair)
+        check_pair(test_id, repeat_id, pair, contract_sha256=digest)
         return digest
     except InvariantViolation as exc:
         record |= {

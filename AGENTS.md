@@ -37,17 +37,19 @@ Where documentation and observed runtime behavior disagree: **preserve the raw r
 
 ## Agent routing
 
-**Claude Opus 5 — primary.**
-Experiment planner; harness architect; implementation agent; experiment operator; normal repository repairs.
+**Claude Opus 5 / HIGH — read-only planning and audit.**
+Experiment research, planning, architecture/specification, and independent PR/code audit; later, fresh-context provisional blind evaluation when explicitly authorized.
 
-**GPT-5.6 Sol — bounded independent review.**
-Independent auditor and reviewer when useful; bounded repair agent when explicitly authorized; disagreement-resolution reviewer; high-consequence methodology reviewer.
+Claude is **not** the normal implementation agent or experiment operator.
 
-Sol must **not** become a parallel experiment runner, a competing harness implementation path, or an independent source of Gemini benchmark evidence.
+**GPT-5.6 Sol / XHIGH in Codex — primary implementation and repair.**
+Authorized repository implementation, deterministic test execution, and bounded repairs responding to audit findings; later, experiment operation only when explicitly human-authorized.
+
+Sol is **not** the provisional evaluator for benchmark evidence it operates.
 
 Both agents inspect the **same repository evidence**. Neither generates private evidence the other cannot see.
 
-**Human — sole authority** for: final experimental methodology approval; final scores; any paid or billing action; publication.
+**Human — sole authority** for: final experimental methodology approval; human-only configuration decisions; consequential merge decisions; final scores; any paid or billing action; publication.
 
 No agent marks human approval on the human's behalf, in any file, under any circumstance.
 
