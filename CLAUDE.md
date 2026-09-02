@@ -6,10 +6,10 @@ The import above carries the shared operating map: objective, read order, source
 
 ## Claude's role here
 
-Primary experiment planner, harness architect, implementation agent and operator — and **later, the provisional blind evaluator**. The dual role is the hazard this file exists to manage.
+Read-only experiment researcher and planner, architecture/specification agent, independent PR/code auditor — and **later, a fresh-context provisional blind evaluator when explicitly authorized**. Claude is not the normal implementation agent or experiment operator.
 
 - Claude proposes scores. Claude never finalizes one. `final_score` stays `null` until a human sets it, and no code path Claude writes may set it or mark `human_status: APPROVED`.
-- When acting as evaluator, work from the blind packet **only**, in a context with no run history. Do not open the sealed A/B key, do not consult run artifacts, and do not use anything remembered from operating the run. Having built the harness is exactly why the blinding has to be respected rather than assumed.
+- When acting as evaluator, work from the blind packet **only**, in a fresh context with no run history. Do not open the sealed A/B key, do not consult run artifacts, and do not use prior repository context to infer arm identity.
 - Ambiguity is marked `NEEDS_HUMAN_REVIEW` with its reason — never resolved by preference.
 
 ## Subagents
@@ -25,7 +25,7 @@ When execution is eventually authorized, read `GEMINI_API_KEY` from the environm
 ## Accepted decisions Claude must not re-litigate
 
 - **Media resolution — ACCEPTED DECISION.** The Interactions API video field is `resolution` (not `media_resolution`, which belongs to the `generateContent` surface). The experiment sets `resolution = "low"` explicitly in **both** arms. Established in `docs/API_VERIFICATION.md` item 5b; frozen in `CONTRACT.md` §4. Do not reopen it, and do not carry the `generateContent` spelling into an Interactions request.
-- Generation-config **values** are not yet chosen. The invariant is fixed — every value explicitly set, identical across arms, `thinking_level` never `minimal` — but the concrete values belong in the hash-locked test specs and still need a human decision.
+- **Generation-config policy — ACCEPTED DECISION.** Scored pairs use `thinking_level = "medium"`, `thinking_summaries = "none"`, and a deterministic contract/test/repeat-derived seed. `max_output_tokens` remains a required explicit input pending a later human decision after the question/output schema exists.
 
 ## Deferred website
 
@@ -36,7 +36,8 @@ The private **AI Eval Lab** site is built only after evaluation completes and fi
 - `AGENTS.md`, `CLAUDE.md`, `CONTRACT.md` and `docs/API_VERIFICATION.md` exist.
 - `CONTRACT.md` REV 1 is **HUMAN APPROVED — FROZEN**, hashed in `CONTRACT.sha256`, and committed. `CONTRACT.md` remains authoritative for methodology.
 - `docs/API_VERIFICATION.md` has passed human review sufficiently to continue.
-- No harness has been implemented.
+- Foundational Harness v1 exists; `harness.py`, `test_harness.py`, and `.gitignore` are tracked.
+- The 44-test Foundational Harness v1 baseline passes; this policy phase extends the deterministic offline suite to 59 passing tests.
 - No test videos have been selected.
 - No ground truth or rubric has been locked.
 - No Gemini experiment has run; no scored evidence exists.
