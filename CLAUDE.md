@@ -34,7 +34,7 @@ The private **AI Eval Lab** site is built only after evaluation completes and fi
 ## Current project state
 
 - `AGENTS.md`, `CLAUDE.md`, `CONTRACT.md` and `docs/API_VERIFICATION.md` exist.
-- `CONTRACT.md` is **REV 1, awaiting human approval** — not yet frozen, not yet hashed, not yet committed.
+- `CONTRACT.md` REV 1 is **HUMAN APPROVED — FROZEN**, hashed in `CONTRACT.sha256`, and committed. `CONTRACT.md` remains authoritative for methodology.
 - `docs/API_VERIFICATION.md` has passed human review sufficiently to continue.
 - No harness has been implemented.
 - No test videos have been selected.

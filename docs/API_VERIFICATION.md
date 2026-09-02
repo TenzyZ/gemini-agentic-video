@@ -6,7 +6,7 @@ Pre-implementation verification gate for the approved evaluation contract.
 - **Verified by:** Claude Opus 5 (experiment operator), from official Google documentation only
 - **Authoritative sources:** `ai.google.dev` (Gemini API docs), `blog.google` (Google announcement)
 - **Rule applied:** anything not established verbatim by an official Google source is marked `UNVERIFIED`. No API field has been invented. Vendor performance claims are labeled as claims, not as verified behavior.
-- **Status of this file:** blocking gate. Harness implementation may not begin until this file is reviewed by the human.
+- **Status of this file:** human review completed 2026-09-02; the API-verification gate has **passed**. Passing this gate does not by itself authorize harness implementation or experiment execution — subsequent work still follows the repository phase gates and requires explicit human authorization for that specific action.
 
 Legend: `CONFIRMED` = stated in official Google documentation. `PARTIAL` = partly documented, with a named gap. `UNVERIFIED` = not established by official documentation.
 
