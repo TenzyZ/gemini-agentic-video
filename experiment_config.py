@@ -11,6 +11,8 @@ import hashlib
 
 THINKING_LEVEL = "medium"
 THINKING_SUMMARIES = "none"
+# Human-approved scored benchmark value; callers must still pass it explicitly.
+SCORED_MAX_OUTPUT_TOKENS = 20_000
 # Validation ceiling from docs/API_VERIFICATION.md item 1, not a benchmark value.
 MODEL_MAX_OUTPUT_TOKENS = 65_536
 SEED_MODULUS = 2**31

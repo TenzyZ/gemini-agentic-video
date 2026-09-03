@@ -25,7 +25,7 @@ When execution is eventually authorized, read `GEMINI_API_KEY` from the environm
 ## Accepted decisions Claude must not re-litigate
 
 - **Media resolution — ACCEPTED DECISION.** The Interactions API video field is `resolution` (not `media_resolution`, which belongs to the `generateContent` surface). The experiment sets `resolution = "low"` explicitly in **both** arms. Established in `docs/API_VERIFICATION.md` item 5b; frozen in `CONTRACT.md` §4. Do not reopen it, and do not carry the `generateContent` spelling into an Interactions request.
-- **Generation-config policy — ACCEPTED DECISION.** Scored pairs use `thinking_level = "medium"`, `thinking_summaries = "none"`, and a deterministic contract/test/repeat-derived seed. `max_output_tokens` remains a required explicit input pending a later human decision after the question/output schema exists.
+- **Generation-config policy — ACCEPTED DECISION.** Scored pairs use `thinking_level = "medium"`, `thinking_summaries = "none"`, `max_output_tokens = 20000`, and a deterministic contract/test/repeat-derived seed. `max_output_tokens` remains a required explicit input.
 
 ## Deferred website
 

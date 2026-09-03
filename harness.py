@@ -20,9 +20,8 @@ Two independent guarantees, both required before a pair is accepted:
    policy, so two identically malformed arms cannot pass by agreeing;
 2. the two arms differ only at the treatment field.
 
-Values that are still a human decision -- the video URIs, the prompts, and
-`max_output_tokens` -- are inputs to this module. It never supplies a default
-for one.
+Per-spec values -- the video URI, prompt, and approved `max_output_tokens` --
+are inputs to this module. It never supplies a default for one.
 """
 
 from __future__ import annotations
@@ -63,12 +62,14 @@ CONTRACT_INTEGRITY = "CONTRACT_INTEGRITY"
 REQUEST_SHAPE = "REQUEST_SHAPE"
 GENERATION_CONFIG = "GENERATION_CONFIG"
 PAIR_DIFFERENCE = "PAIR_DIFFERENCE"
+SPEC_VALIDATION = "SPEC_VALIDATION"
 
 FAILED_INVARIANT = {
     CONTRACT_INTEGRITY: "CONTRACT.md matches the hash recorded in CONTRACT.sha256",
     REQUEST_SHAPE: "each arm matches the frozen request shape (CONTRACT.md section 4)",
     GENERATION_CONFIG: "each arm matches the approved scored generation-config policy",
     PAIR_DIFFERENCE: PAIR_INVARIANT,
+    SPEC_VALIDATION: "test spec satisfies the frozen schema and hash locks",
 }
 
 
@@ -385,47 +386,62 @@ def preflight(
     `verify` is injectable so tests can simulate a contract-integrity
     failure without touching the frozen artifacts.
     """
-    record = {
-        "stage": "PRE-FLIGHT",
-        "failure_class": "HARNESS",
-        "request_made": False,
-        "timestamp": None,
-        "pair_id": f"{test_id}/{repeat_id}",
-        "contract_rev": CONTRACT_REV,
-    }
+    pair_id = f"{test_id}/{repeat_id}"
 
     try:
         digest = verify()
     except ContractIntegrityError as exc:
-        record |= {
-            "timestamp": _now(),
-            "invariant_category": CONTRACT_INTEGRITY,
-            "failed_invariant": FAILED_INVARIANT[CONTRACT_INTEGRITY],
-            "violations": [f"CONTRACT.md integrity: {exc}"],
-        }
-        _record_preflight_failure(record, evidence_dir)
+        record_preflight_failure(
+            pair_id=pair_id,
+            invariant_category=CONTRACT_INTEGRITY,
+            violations=[f"CONTRACT.md integrity: {exc}"],
+            evidence_dir=evidence_dir,
+            contract_rev=CONTRACT_REV,
+        )
 
     try:
         check_pair(test_id, repeat_id, pair, contract_sha256=digest)
         return digest
     except InvariantViolation as exc:
-        record |= {
-            "timestamp": _now(),
+        details = {
+            "contract_rev": CONTRACT_REV,
             "contract_sha256": digest,
-            "invariant_category": exc.category,
-            "failed_invariant": FAILED_INVARIANT[exc.category],
-            "violations": exc.violations,
             "payload_sha256": {arm: _safe_sha(payload) for arm, payload in pair.items()},
         }
         if exc.category == PAIR_DIFFERENCE:
             flat = {arm: _flatten(payload) for arm, payload in pair.items()}
-            record["differing_values"] = {
+            details["differing_values"] = {
                 path: {arm: flat[arm].get(path) for arm in pair} for path in exc.violations
             }
-        _record_preflight_failure(record, evidence_dir)
+        record_preflight_failure(
+            pair_id=pair_id,
+            invariant_category=exc.category,
+            violations=exc.violations,
+            evidence_dir=evidence_dir,
+            **details,
+        )
 
 
-def _record_preflight_failure(record: dict, evidence_dir: Path | None) -> None:
+def record_preflight_failure(
+    *,
+    pair_id: str,
+    invariant_category: str,
+    violations: list[str],
+    evidence_dir: Path | None = None,
+    **details,
+) -> None:
+    """Persist and raise one standard non-request preflight failure."""
+    record = {
+        **details,
+        "stage": "PRE-FLIGHT",
+        "failure_class": "HARNESS",
+        "request_made": False,
+        "timestamp": _now(),
+        "pair_id": pair_id,
+        "invariant_category": invariant_category,
+        "failed_invariant": FAILED_INVARIANT[invariant_category],
+        "violations": violations,
+    }
     if evidence_dir is not None:
         write_evidence(Path(evidence_dir), "preflight_failure.json", record)
     raise PreflightError(record)
