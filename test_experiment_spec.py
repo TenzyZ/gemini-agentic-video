@@ -73,10 +73,10 @@ def make_spec(test_id="T001"):
     }
 
 
-def write_spec(directory, spec, *, write_hash=True):
+def write_spec(directory, spec, *, write_hash=True, filename=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{spec.get('test_id', 'fixture')}.json"
+    path = directory / (filename or f"{spec.get('test_id', 'fixture')}.json")
     raw = json.dumps(spec, indent=2).encode("utf-8")
     path.write_bytes(raw)
     if write_hash:
@@ -157,6 +157,20 @@ class TestSpecHashRejection(SpecTestCase):
 
 
 class TestIdentityAndBindingRejection(SpecTestCase):
+    def test_spec_filename_must_match_test_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_spec(tmp, make_spec(), filename="foo.json")
+            with self.assertRaises(experiment_spec.SpecValidationError) as ctx:
+                experiment_spec.load_spec(path)
+            self.assertIn("filename/test_id mismatch", str(ctx.exception))
+
+    def test_other_test_filename_cannot_claim_t001(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_spec(tmp, make_spec(), filename="T002.json")
+            with self.assertRaises(experiment_spec.SpecValidationError) as ctx:
+                experiment_spec.load_spec(path)
+            self.assertIn("filename/test_id mismatch", str(ctx.exception))
+
     def test_wrong_spec_version_fails(self):
         spec = make_spec()
         spec["spec_version"] = 2

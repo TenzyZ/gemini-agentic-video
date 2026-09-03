@@ -63,6 +63,8 @@ REQUEST_SHAPE = "REQUEST_SHAPE"
 GENERATION_CONFIG = "GENERATION_CONFIG"
 PAIR_DIFFERENCE = "PAIR_DIFFERENCE"
 SPEC_VALIDATION = "SPEC_VALIDATION"
+TRUTH_VALIDATION = "TRUTH_VALIDATION"
+RUBRIC_VALIDATION = "RUBRIC_VALIDATION"
 
 FAILED_INVARIANT = {
     CONTRACT_INTEGRITY: "CONTRACT.md matches the hash recorded in CONTRACT.sha256",
@@ -70,6 +72,10 @@ FAILED_INVARIANT = {
     GENERATION_CONFIG: "each arm matches the approved scored generation-config policy",
     PAIR_DIFFERENCE: PAIR_INVARIANT,
     SPEC_VALIDATION: "test spec satisfies the frozen schema and hash locks",
+    TRUTH_VALIDATION: (
+        "truth artifact satisfies the frozen schema and cross-artifact hash bindings"
+    ),
+    RUBRIC_VALIDATION: "rubric artifact satisfies the frozen schema and hash lock",
 }
 
 
