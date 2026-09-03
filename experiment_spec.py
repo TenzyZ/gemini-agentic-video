@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
+import artifact_lock
 import experiment_config
 import harness
 
@@ -64,53 +64,6 @@ def _is_digest(value) -> bool:
         and len(value) == 64
         and all(c in "0123456789abcdef" for c in value)
     )
-
-
-def _read_hash_locked(spec_path: Path) -> bytes:
-    sha_path = spec_path.with_suffix(".sha256")
-    if not spec_path.is_file():
-        raise SpecValidationError([f"spec: file not found: {spec_path}"])
-    if not sha_path.is_file():
-        raise SpecValidationError([f"spec_sha256: file not found: {sha_path}"])
-
-    try:
-        raw = spec_path.read_bytes()
-        fields = sha_path.read_bytes().decode("utf-8").split()
-    except (OSError, UnicodeDecodeError) as exc:
-        raise SpecValidationError([f"spec_sha256: unreadable: {exc}"]) from exc
-
-    if (
-        len(fields) != 2
-        or not _is_digest(fields[0].lower())
-        or fields[1].lstrip("*") != spec_path.name
-    ):
-        raise SpecValidationError([f"spec_sha256: malformed record: {sha_path}"])
-
-    recorded = fields[0].lower()
-    computed = hashlib.sha256(raw).hexdigest()
-    if computed != recorded:
-        raise SpecValidationError(
-            [f"spec_sha256: mismatch: computed {computed}, recorded {recorded}"]
-        )
-    return raw
-
-
-def _reject_duplicate_keys(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise SpecValidationError([f"json: duplicate key {key!r}"])
-        value[key] = item
-    return value
-
-
-def _parse_spec(raw: bytes):
-    try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
-    except SpecValidationError:
-        raise
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SpecValidationError([f"spec: invalid UTF-8 JSON: {exc}"]) from exc
 
 
 def _validate_video(spec: dict, violations: list[str]) -> None:
@@ -309,7 +262,7 @@ def _validate_repeats(spec: dict, test_id: str | None, contract_sha256: str, vio
             )
 
 
-def validate_spec(spec) -> None:
+def validate_spec(spec, *, filename_stem: str | None = None) -> None:
     """Validate parsed spec data against every frozen structural binding."""
     violations: list[str] = []
     if not _exact_mapping(spec, "spec", TOP_LEVEL_KEYS, violations):
@@ -325,6 +278,15 @@ def validate_spec(spec) -> None:
         valid_test_id = None
     else:
         valid_test_id = test_id
+    if (
+        isinstance(test_id, str)
+        and filename_stem is not None
+        and filename_stem != test_id
+    ):
+        violations.append(
+            "spec filename/test_id mismatch: "
+            f"{filename_stem + '.json'!r} != {test_id + '.json'!r}"
+        )
 
     expected_class = "STRESS" if test_id == "T004" else "BENCHMARK"
     if valid_test_id is not None and spec.get("test_class") != expected_class:
@@ -359,8 +321,10 @@ def validate_spec(spec) -> None:
         raise SpecValidationError(violations)
 
 
-def load_spec(spec_path: Path, evidence_dir: Path | None = None) -> dict:
-    """Verify exact bytes, parse, validate, and return one frozen test spec.
+def load_spec_with_digest(
+    spec_path: Path, evidence_dir: Path | None = None
+) -> tuple[dict, str]:
+    """Verify and return one frozen test spec plus its exact-byte digest.
 
     When ``evidence_dir`` is supplied, failures use the harness's standard
     PRE-FLIGHT / HARNESS evidence path and its non-overwrite guarantee.
@@ -368,11 +332,16 @@ def load_spec(spec_path: Path, evidence_dir: Path | None = None) -> dict:
     spec_path = Path(spec_path)
     test_id = spec_path.stem
     try:
-        spec = _parse_spec(_read_hash_locked(spec_path))
+        spec, digest = artifact_lock.load_hash_locked_json(
+            spec_path,
+            artifact_label="spec",
+            lock_label="spec_sha256",
+            error_type=SpecValidationError,
+        )
         if isinstance(spec, dict) and isinstance(spec.get("test_id"), str):
             test_id = spec["test_id"]
-        validate_spec(spec)
-        return spec
+        validate_spec(spec, filename_stem=spec_path.stem)
+        return spec, digest
     except SpecValidationError as exc:
         if evidence_dir is not None:
             harness.record_preflight_failure(
@@ -384,3 +353,8 @@ def load_spec(spec_path: Path, evidence_dir: Path | None = None) -> dict:
                 spec_path=str(spec_path),
             )
         raise
+
+
+def load_spec(spec_path: Path, evidence_dir: Path | None = None) -> dict:
+    """Verify exact bytes, parse, validate, and return one frozen test spec."""
+    return load_spec_with_digest(spec_path, evidence_dir=evidence_dir)[0]

@@ -36,11 +36,12 @@ The private **AI Eval Lab** site is built only after evaluation completes and fi
 - `AGENTS.md`, `CLAUDE.md`, `CONTRACT.md` and `docs/API_VERIFICATION.md` exist.
 - `CONTRACT.md` REV 1 is **HUMAN APPROVED — FROZEN**, hashed in `CONTRACT.sha256`, and committed. `CONTRACT.md` remains authoritative for methodology.
 - `docs/API_VERIFICATION.md` has passed human review sufficiently to continue.
-- Foundational Harness v1 exists; `harness.py`, `test_harness.py`, and `.gitignore` are tracked.
-- The 44-test Foundational Harness v1 baseline passes; this policy phase extends the deterministic offline suite to 59 passing tests.
-- No test videos have been selected.
-- No ground truth or rubric has been locked.
-- No Gemini experiment has run; no scored evidence exists.
+- Offline configuration, spec, truth, and rubric validation is tracked in `experiment_config.py`, `experiment_spec.py`, `experiment_truth.py`, `artifact_lock.py`, and `harness.py`.
+- Deterministic coverage is tracked in `test_experiment_spec.py`, `test_experiment_truth.py`, and `test_harness.py`; the offline suite passes 130 tests.
+- No real test videos have been selected.
+- No real ground truth has been frozen.
+- No real rubric has been frozen.
+- No scored Gemini experiment has run; no scored evidence exists.
 - No final scores exist.
 - Billing has not been authorized.
 
